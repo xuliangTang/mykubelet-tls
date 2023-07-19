@@ -1,12 +1,17 @@
 package node
 
 import (
+	"context"
 	"fmt"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/json"
 	"k8s.io/apimachinery/pkg/util/strategicpatch"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/klog/v2"
 )
 
 // 获取新旧节点的patch内容
@@ -71,4 +76,31 @@ func fixupPatchForNodeStatusAddresses(patchBytes []byte, addresses []v1.NodeAddr
 	statusMap["addresses"] = addrArray
 
 	return json.Marshal(patchMap)
+}
+
+// SetNodeOwnerFunc helps construct a newLeasePostProcessFunc which sets
+// a node OwnerReference to the given lease object
+func SetNodeOwnerFunc(c kubernetes.Interface, nodeName string) func(lease *coordinationv1.Lease) error {
+	return func(lease *coordinationv1.Lease) error {
+		// Setting owner reference needs node's UID. Note that it is different from
+		// kubelet.nodeRef.UID. When lease is initially created, it is possible that
+		// the connection between master and node is not ready yet. So try to set
+		// owner reference every time when renewing the lease, until successful.
+		if len(lease.OwnerReferences) == 0 {
+			if node, err := c.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{}); err == nil {
+				lease.OwnerReferences = []metav1.OwnerReference{
+					{
+						APIVersion: v1.SchemeGroupVersion.WithKind("Node").Version,
+						Kind:       v1.SchemeGroupVersion.WithKind("Node").Kind,
+						Name:       nodeName,
+						UID:        node.UID,
+					},
+				}
+			} else {
+				klog.ErrorS(err, "Failed to get node when trying to set owner ref to the node lease", "node", klog.KRef("", nodeName))
+				return err
+			}
+		}
+		return nil
+	}
 }

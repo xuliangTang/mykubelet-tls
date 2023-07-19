@@ -21,4 +21,7 @@ func main() {
 	// 注册节点
 	client := common.NewForKubeletConfig()
 	node.RegisterNode(client, nodeName)
+
+	// 启动租约控制器
+	node.StartLeaseController(client, nodeName)
 }
