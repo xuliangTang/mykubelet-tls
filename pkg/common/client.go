@@ -53,3 +53,17 @@ func NewForKubeletConfig() *kubernetes.Clientset {
 
 	return client
 }
+
+// NewForHomeConfig 创建clientset
+func NewForHomeConfig() *kubernetes.Clientset {
+	restConfig, err := clientcmd.BuildConfigFromFlags("", clientcmd.RecommendedHomeFile)
+	if err != nil {
+		klog.Fatalln(err)
+	}
+	client, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		klog.Fatalln(err)
+	}
+
+	return client
+}

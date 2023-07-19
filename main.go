@@ -15,8 +15,7 @@ func main() {
 	// bootstrap认证生成kubelet config
 	masterUrl := "https://110.41.142.160:6443"
 	nodeName := "mykubelet"
-	token := "tttghq.s5uhy3h2gz0cskxg"
-	bootstrap.BootStrap(token, nodeName, masterUrl)
+	bootstrap.BootStrap(nodeName, masterUrl)
 
 	// 注册节点
 	client := common.NewForKubeletConfig()
