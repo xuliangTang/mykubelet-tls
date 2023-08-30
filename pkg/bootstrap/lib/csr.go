@@ -46,9 +46,13 @@ func CreateCsr(client *kubernetes.Clientset, nodeName string) (*certificatesv1.C
 			Request: csrPem,
 			Usages: []certificatesv1.KeyUsage{
 				certificatesv1.UsageClientAuth,
+				// 自动批复所需的许可密钥用途
+				certificatesv1.UsageDigitalSignature,
+				certificatesv1.UsageKeyEncipherment,
 			},
 			ExpirationSeconds: pointer.Int32(int32(time.Second * 3600 / time.Second)),
-			SignerName:        certificatesv1.KubeAPIServerClientSignerName,
+			// SignerName:        certificatesv1.KubeAPIServerClientSignerName,	  // 手动批复
+			SignerName: certificatesv1.KubeAPIServerClientKubeletSignerName, // 自动批复
 		},
 	}
 	csrRet, err := client.CertificatesV1().CertificateSigningRequests().
