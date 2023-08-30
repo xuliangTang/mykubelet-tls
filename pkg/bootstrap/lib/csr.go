@@ -12,12 +12,17 @@ import (
 	"github.com/pkg/errors"
 	certificatesv1 "k8s.io/api/certificates/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/cache"
 	apiv1 "k8s.io/client-go/tools/clientcmd/api/v1"
+	watchtools "k8s.io/client-go/tools/watch"
 	"k8s.io/client-go/util/cert"
 	"k8s.io/client-go/util/certificate/csr"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/pointer"
+	"log"
 	"mykubelet/pkg/common"
 	"os"
 	"sigs.k8s.io/yaml"
@@ -112,6 +117,8 @@ func savePrivateKey(key *ecdsa.PrivateKey) error {
 
 // WaitForCsrApprove 等待csr批复，保存kubelet证书到文件
 func WaitForCsrApprove(client *kubernetes.Clientset, csrObj *certificatesv1.CertificateSigningRequest) error {
+	return waitForCsrApprove(client, csrObj)
+
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*3600)
 	defer cancel()
 	klog.Info("waiting for csr is approved...")
@@ -123,6 +130,55 @@ func WaitForCsrApprove(client *kubernetes.Clientset, csrObj *certificatesv1.Cert
 	}
 
 	return os.WriteFile(BootstrapPem, csrData, 0600)
+}
+
+// 手动提取csr.WaitForCertificate()的核心代码，实现等待批准csr
+// 核心方法：watchtools.UntilWithSync()
+func waitForCsrApprove(client *kubernetes.Clientset, csrObj *certificatesv1.CertificateSigningRequest) error {
+	var certData []byte
+	lw := cache.NewListWatchFromClient(client.CertificatesV1().RESTClient(), "certificatesigningrequests", "", fields.Everything())
+
+	_, err := watchtools.UntilWithSync(
+		context.Background(),
+		lw,
+		&certificatesv1.CertificateSigningRequest{},
+		nil,
+		func(event watch.Event) (bool, error) {
+			log.Println("进入了")
+			if getCsr, ok := event.Object.(*certificatesv1.CertificateSigningRequest); ok {
+				if getCsr.UID != csrObj.UID {
+					return false, fmt.Errorf("csr %q changed UIDs", getCsr.Name)
+				}
+				approved := false
+				for _, c := range getCsr.Status.Conditions {
+					if c.Type == certificatesv1.CertificateDenied {
+						return false, fmt.Errorf("certificate signing request is denied, reason: %v, message: %v", c.Reason, c.Message)
+					}
+					if c.Type == certificatesv1.CertificateFailed {
+						return false, fmt.Errorf("certificate signing request failed, reason: %v, message: %v", c.Reason, c.Message)
+					}
+					if c.Type == certificatesv1.CertificateApproved {
+						approved = true
+					}
+				}
+
+				if approved {
+					if len(getCsr.Status.Certificate) > 0 {
+						log.Println("批准了")
+						certData = getCsr.Status.Certificate
+						return true, nil
+					}
+					klog.V(2).Infof("certificate signing request %s is approved, waiting to be issued", getCsr.Name)
+				}
+			}
+
+			return false, nil
+		},
+	)
+	if err != nil {
+		klog.Fatalln(err)
+	}
+	return os.WriteFile(BootstrapPem, certData, 0600)
 }
 
 // GenKubeconfig 生成kubeconfig
